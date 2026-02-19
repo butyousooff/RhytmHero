@@ -1,5 +1,6 @@
 import pygame
 import sys
+import numpy as np
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
@@ -11,6 +12,42 @@ HIT_LINE_Y = SCREEN_HEIGHT - 100
 KEYS = {pygame.K_q: 0, pygame.K_w: 1, pygame.K_e: 2, pygame.K_r: 3}
 KEY_NAMES = ['Q', 'W', 'E', 'R']
 
+hit_sounds = {}
+
+
+def midi_to_freq(note_number):
+    return 440 * (2 ** ((note_number - 69) / 12))
+
+
+def generate_sound(frequency=440, duration=0.15, volume=0.4):
+    sample_rate = 44100
+    n_samples = int(sample_rate * duration)
+    t = np.linspace(0, duration, n_samples, False)
+
+    wave = np.sin(2 * np.pi * frequency * t)
+
+    attack = int(n_samples * 0.1)
+    decay = int(n_samples * 0.3)
+    envelope = np.ones(n_samples)
+    envelope[:attack] = np.linspace(0, 1, attack)
+    envelope[-decay:] = np.linspace(1, 0, decay)
+
+    wave = wave * envelope * volume
+    audio = np.int16(wave * 32767)
+
+    stereo = np.column_stack((audio, audio))
+    return pygame.sndarray.make_sound(stereo)
+
+
+def play_note_sound(note_number):
+    if note_number not in hit_sounds:
+        freq = midi_to_freq(note_number)
+        hit_sounds[note_number] = generate_sound(freq)
+        if len(hit_sounds) > 50:
+            hit_sounds.pop(next(iter(hit_sounds)))
+
+    if note_number in hit_sounds:
+        hit_sounds[note_number].play()
 
 def draw_lanes(screen):
     for i in range(LANES):
@@ -26,9 +63,12 @@ def draw_lanes(screen):
 
 def main():
     pygame.init()
+    pygame.mixer.pre_init(44100, -16, 2, 512) 
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     pygame.display.set_caption("Rhythm Hero")
     clock = pygame.time.Clock()
+
+    lane_notes = [60, 64, 67, 72]
 
     running = True
     while running:
@@ -40,7 +80,9 @@ def main():
                     running = False
                 if event.key in KEYS:
                     lane = KEYS[event.key]
-                    print(f"Нажата дорожка {lane} ({KEY_NAMES[lane]})")
+                    note = lane_notes[lane]
+                    print(f"Дорожка {lane}: нота {note} ({midi_to_freq(note):.1f} Hz)")
+                    play_note_sound(note)
 
         screen.fill((0, 0, 0))
         draw_lanes(screen)
