@@ -1,6 +1,8 @@
 import pygame
 import sys
 import numpy as np
+import mido
+import os
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
@@ -13,6 +15,85 @@ KEYS = {pygame.K_q: 0, pygame.K_w: 1, pygame.K_e: 2, pygame.K_r: 3}
 KEY_NAMES = ['Q', 'W', 'E', 'R']
 
 hit_sounds = {}
+
+
+def analyze_midi_file(filepath):
+    if not os.path.exists(filepath):
+        print(f"Файл не найден: {filepath}")
+        return []
+
+    try:
+        mid = mido.MidiFile(filepath)
+        print(f"Загружен MIDI: {len(mid.tracks)} дорожек")
+    except Exception as e:
+        print(f"Ошибка чтения MIDI: {e}")
+        return []
+
+    tracks_info = []
+
+    for i, track in enumerate(mid.tracks):
+        notes = []
+        abs_time = 0
+        tempo = 500000
+
+        for msg in track:
+            abs_time += msg.time
+
+            if msg.type == 'set_tempo':
+                tempo = msg.tempo
+
+            if msg.type == 'note_on' and msg.velocity > 0:
+                seconds = mido.tick2second(abs_time, mid.ticks_per_beat, tempo)
+                notes.append({
+                    'note': msg.note,
+                    'time': seconds,
+                    'velocity': msg.velocity
+                })
+
+        if notes:
+            note_nums = [n['note'] for n in notes]
+            tracks_info.append({
+                'index': i,
+                'name': f"Track {i + 1}",
+                'notes': notes,
+                'count': len(notes),
+                'min_note': min(note_nums),
+                'max_note': max(note_nums)
+            })
+            print(f"  Дорожка {i}: {len(notes)} нот ({min(note_nums)}-{max(note_nums)})")
+
+    return tracks_info
+
+
+def load_notes_from_tracks(tracks_info, selected_indices, bpm=120):
+    all_notes = []
+
+    tempo_mult = 120.0 / bpm
+
+    for track in tracks_info:
+        if track['index'] not in selected_indices:
+            continue
+
+        for note_data in track['notes']:
+            all_notes.append({
+                'start_time': note_data['time'] * tempo_mult,
+                'lane': note_data['note'] % LANES,
+                'note': note_data['note'],
+                'hit': False
+            })
+
+    all_notes.sort(key=lambda x: x['start_time'])
+
+    filtered = []
+    last_time = [-1000] * LANES
+
+    for note in all_notes:
+        lane = note['lane']
+        if note['start_time'] - last_time[lane] > 0.05:
+            filtered.append(note)
+            last_time[lane] = note['start_time']
+
+    return filtered
 
 
 def midi_to_freq(note_number):
@@ -49,6 +130,7 @@ def play_note_sound(note_number):
     if note_number in hit_sounds:
         hit_sounds[note_number].play()
 
+
 def draw_lanes(screen):
     for i in range(LANES):
         x = i * LANE_WIDTH
@@ -63,7 +145,7 @@ def draw_lanes(screen):
 
 def main():
     pygame.init()
-    pygame.mixer.pre_init(44100, -16, 2, 512) 
+    pygame.mixer.pre_init(44100, -16, 2, 512)
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     pygame.display.set_caption("Rhythm Hero")
     clock = pygame.time.Clock()
@@ -94,4 +176,15 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    os.makedirs('songs', exist_ok=True)
+
+    midi_files = [f for f in os.listdir('songs') if f.endswith('.mid')]
+
+    if midi_files:
+        filepath = os.path.join('songs', midi_files[0])
+        tracks = analyze_midi_file(filepath)
+        if tracks:
+            notes = load_notes_from_tracks(tracks, [0], bpm=120)
+            print(f"Загружено {len(notes)} нот")
+    else:
+        print("Положи .mid файлы в папку songs/")
