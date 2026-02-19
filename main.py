@@ -16,6 +16,48 @@ KEY_NAMES = ['Q', 'W', 'E', 'R']
 
 hit_sounds = {}
 
+game_notes = []
+game_time = 0.0
+note_speed = 300
+score = 0
+hits = 0
+misses = 0
+
+
+def spawn_active_notes(notes, current_time, speed):
+    active = []
+    for note in notes:
+        time_diff = note['start_time'] - current_time
+        y = HIT_LINE_Y - (time_diff * speed)
+
+        if -60 < y < SCREEN_HEIGHT + 60:
+            active.append({
+                'lane': note['lane'],
+                'y': y,
+                'data': note
+            })
+
+    return active
+
+
+def draw_notes(screen, active_notes):
+    for note in active_notes:
+        lane = note['lane']
+        y = note['y']
+        color = (255, 100, 100) if not note['data']['hit'] else (100, 255, 100)
+
+        x = lane * LANE_WIDTH + 12
+        pygame.draw.rect(screen, color, (x, y, LANE_WIDTH - 24, 18), border_radius=4)
+
+
+def check_hit(lane, active_notes):
+    for note in active_notes:
+        if note['lane'] == lane and not note['data']['hit']:
+            if abs(note['y'] - HIT_LINE_Y) < 60:
+                note['data']['hit'] = True
+                return True
+    return False
+
 
 def analyze_midi_file(filepath):
     if not os.path.exists(filepath):
@@ -150,10 +192,22 @@ def main():
     pygame.display.set_caption("Rhythm Hero")
     clock = pygame.time.Clock()
 
-    lane_notes = [60, 64, 67, 72]
+    global game_time, game_notes, score, hits, misses, note_speed
+
+    game_notes = []
+    for i in range(20):
+        game_notes.append({
+            'start_time': i * 0.5,
+            'lane': i % LANES,
+            'note': 60 + (i % 4) * 5,
+            'hit': False
+        })
 
     running = True
     while running:
+        dt = clock.tick(FPS) / 1000.0
+        game_time += dt
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -162,14 +216,32 @@ def main():
                     running = False
                 if event.key in KEYS:
                     lane = KEYS[event.key]
-                    note = lane_notes[lane]
-                    print(f"Дорожка {lane}: нота {note} ({midi_to_freq(note):.1f} Hz)")
-                    play_note_sound(note)
+                    active = spawn_active_notes(game_notes, game_time, note_speed)
+
+                    if check_hit(lane, active):
+                        score += 100
+                        hits += 1
+
+                        for n in active:
+                            if n['lane'] == lane and n['data']['hit']:
+                                play_note_sound(n['data']['note'])
+                                break
+                        print(f"Hit! Score: {score}")
+                    else:
+                        misses += 1
+                        print(f"Miss! Misses: {misses}")
 
         screen.fill((0, 0, 0))
         draw_lanes(screen)
+
+        active_notes = spawn_active_notes(game_notes, game_time, note_speed)
+        draw_notes(screen, active_notes)
+
+        font = pygame.font.Font(None, 32)
+        ui_text = f"Score: {score} | Hits: {hits} | Miss: {misses}"
+        screen.blit(font.render(ui_text, True, (255, 255, 255)), (15, 12))
+
         pygame.display.flip()
-        clock.tick(FPS)
 
     pygame.quit()
     sys.exit()
