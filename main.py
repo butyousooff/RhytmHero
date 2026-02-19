@@ -23,6 +23,57 @@ score = 0
 hits = 0
 misses = 0
 
+STATE_MENU = 0
+STATE_PLAYING = 1
+STATE_GAMEOVER = 2
+
+current_state = STATE_MENU
+
+
+def draw_menu(screen, songs, selected_idx, mouse_pos):
+    screen.fill((18, 18, 38))
+
+    font_large = pygame.font.Font(None, 72)
+    font_medium = pygame.font.Font(None, 38)
+
+    title = font_large.render("RHYTHM HERO", True, (255, 255, 255))
+    screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 150))
+
+    y = 250
+    if not songs:
+        warn = font_medium.render("Put .mid files in 'songs/' folder", True, (255, 150, 150))
+        screen.blit(warn, (SCREEN_WIDTH // 2 - warn.get_width() // 2, y))
+        y += 50
+
+    select_text = font_medium.render("Select a song:", True, (200, 200, 220))
+    screen.blit(select_text, (SCREEN_WIDTH // 2 - select_text.get_width() // 2, y))
+    y += 50
+
+    song_rects = []
+    for i, song in enumerate(songs):
+        name = song.replace('.mid', '')[:30]
+        color = (90, 90, 180) if i != selected_idx else (130, 130, 240)
+        hover_color = (130, 130, 240) if i != selected_idx else (180, 180, 255)
+
+        rect = pygame.Rect(SCREEN_WIDTH // 2 - 200, y + i * 55, 400, 45)
+        pygame.draw.rect(screen, color, rect, border_radius=8)
+        pygame.draw.rect(screen, hover_color, rect, 2, border_radius=8)
+
+        text = font_medium.render(name, True, (255, 255, 255))
+        screen.blit(text, (rect.centerx - text.get_width() // 2, rect.centery - text.get_height() // 2))
+
+        song_rects.append((rect, i))
+
+    enabled = len(songs) > 0
+    play_color = (40, 180, 40) if enabled else (80, 100, 80)
+    play_rect = pygame.Rect(SCREEN_WIDTH // 2 - 100, y + len(songs) * 55 + 40, 200, 50)
+    pygame.draw.rect(screen, play_color, play_rect, border_radius=8)
+    play_text = font_medium.render("PLAY", True, (255, 255, 255))
+    screen.blit(play_text,
+                (play_rect.centerx - play_text.get_width() // 2, play_rect.centery - play_text.get_height() // 2))
+
+    return song_rects, play_rect
+
 
 def spawn_active_notes(notes, current_time, speed):
     active = []
@@ -186,27 +237,21 @@ def draw_lanes(screen):
 
 
 def main():
+    global current_state, game_time, score, hits, misses
+
     pygame.init()
     pygame.mixer.pre_init(44100, -16, 2, 512)
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     pygame.display.set_caption("Rhythm Hero")
     clock = pygame.time.Clock()
 
-    global game_time, game_notes, score, hits, misses, note_speed
-
-    game_notes = []
-    for i in range(20):
-        game_notes.append({
-            'start_time': i * 0.5,
-            'lane': i % LANES,
-            'note': 60 + (i % 4) * 5,
-            'hit': False
-        })
+    songs = [f for f in os.listdir('songs') if f.endswith('.mid')] if os.path.exists('songs') else []
+    selected_song = 0 if songs else -1
 
     running = True
     while running:
         dt = clock.tick(FPS) / 1000.0
-        game_time += dt
+        mouse_pos = pygame.mouse.get_pos()
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -214,32 +259,42 @@ def main():
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
-                if event.key in KEYS:
-                    lane = KEYS[event.key]
-                    active = spawn_active_notes(game_notes, game_time, note_speed)
 
-                    if check_hit(lane, active):
-                        score += 100
-                        hits += 1
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if current_state == STATE_MENU:
+                    song_rects, play_rect = draw_menu(screen, songs, selected_song, mouse_pos)
 
-                        for n in active:
-                            if n['lane'] == lane and n['data']['hit']:
-                                play_note_sound(n['data']['note'])
-                                break
-                        print(f"Hit! Score: {score}")
-                    else:
-                        misses += 1
-                        print(f"Miss! Misses: {misses}")
+                    for rect, idx in song_rects:
+                        if rect.collidepoint(mouse_pos):
+                            selected_song = idx
+                            print(f"Selected: {songs[idx]}")
 
-        screen.fill((0, 0, 0))
-        draw_lanes(screen)
+                    if play_rect.collidepoint(mouse_pos) and selected_song >= 0:
+                        filepath = os.path.join('songs', songs[selected_song])
+                        tracks = analyze_midi_file(filepath)
+                        if tracks:
+                            game_notes = load_notes_from_tracks(tracks, [0], bpm=120)
+                            game_time = 0.0
+                            score = hits = misses = 0
+                            current_state = STATE_PLAYING
+                            print(f"Game started with {len(game_notes)} notes")
 
-        active_notes = spawn_active_notes(game_notes, game_time, note_speed)
-        draw_notes(screen, active_notes)
+        if current_state == STATE_MENU:
+            draw_menu(screen, songs, selected_song, mouse_pos)
+        elif current_state == STATE_PLAYING:
+            game_time += dt
+            screen.fill((0, 0, 0))
+            draw_lanes(screen)
 
-        font = pygame.font.Font(None, 32)
-        ui_text = f"Score: {score} | Hits: {hits} | Miss: {misses}"
-        screen.blit(font.render(ui_text, True, (255, 255, 255)), (15, 12))
+            active = spawn_active_notes(game_notes, game_time, note_speed)
+            draw_notes(screen, active)
+
+            if game_notes and game_time > game_notes[-1]['start_time'] + 2:
+                current_state = STATE_GAMEOVER
+
+            font = pygame.font.Font(None, 32)
+            ui = f"Score: {score} | Hits: {hits} | Miss: {misses}"
+            screen.blit(font.render(ui, True, (255, 255, 255)), (15, 12))
 
         pygame.display.flip()
 
@@ -248,15 +303,4 @@ def main():
 
 
 if __name__ == "__main__":
-    os.makedirs('songs', exist_ok=True)
-
-    midi_files = [f for f in os.listdir('songs') if f.endswith('.mid')]
-
-    if midi_files:
-        filepath = os.path.join('songs', midi_files[0])
-        tracks = analyze_midi_file(filepath)
-        if tracks:
-            notes = load_notes_from_tracks(tracks, [0], bpm=120)
-            print(f"Загружено {len(notes)} нот")
-    else:
-        print("Положи .mid файлы в папку songs/")
+    main()
